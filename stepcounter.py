@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
-from scipy import signal
+from scipy import signal, fftpack
 
 class stepcounter:
 	def __init__(self, src, cols):
@@ -34,7 +34,7 @@ class stepcounter:
 		print(self.IMU_data.head(n=nrows))
 
 
-	def count(self, arr, ):
+	def count(self, arr):
 		"""
 		count the number of "steps". Step is defined as num before is -1
 		arr: a 1D np array
@@ -46,16 +46,19 @@ class stepcounter:
 		return count
 
 
+
 	def visualizeAccel(self, offset=300, nsamples=600):
 		"""
 		Plots the raw (unfiltered) accelerometer only data 
 		"""
-		x = np.array(self.IMU_data['WatchtImeIntervalSince1970'][offset:nsamples])
+		end_sample = nsamples+offset
+
+		x = np.array(self.IMU_data['WatchtImeIntervalSince1970'][offset:end_sample])
 #		print(x)
 		fig, ax = plt.subplots(3)
 		fig.subplots_adjust(hspace = 1)
 		for i in range(0,3):
-			y = np.array(self.IMU_data[self.cols[i+4]][offset:nsamples])
+			y = np.array(self.IMU_data[self.cols[i+4]][offset:end_sample])
 			ax[i].set_title(self.cols[i+4])
 			ax[i].plot(x,y)
 		plt.show()
@@ -78,12 +81,13 @@ class stepcounter:
 
 
 	def plotFiltered(self, cutoff=10, offset=300, nsamples=600):
-		x = np.array(self.IMU_data['WatchtImeIntervalSince1970'][offset:nsamples])
+		end_sample = nsamples+offset
+		x = np.array(self.IMU_data['WatchtImeIntervalSince1970'][offset:end_sample])
 		fig, ax = plt.subplots(3)
 		fig.subplots_adjust(hspace = 1)
 		for i in range(0,3):
 			y = self.applyFilter(cutoff, 
-				waveform=np.array(self.IMU_data[self.cols[i+4]][offset:nsamples]))
+				waveform=np.array(self.IMU_data[self.cols[i+4]][offset:end_sample]))
 			ax[i].set_title("Filtered "+self.cols[i+4])
 			ax[i].plot(x,y)
 		plt.show()
@@ -117,6 +121,48 @@ class stepcounter:
 	                stdFilter = np.asarray(stdFilter))
 
 
+	def applySimplePeakDetect(self, y, alpha=1):
+		"""
+		Naive peak detection method which looks at a current datapoint as well as the nearby points
+		"""
+		peaks = np.zeros(len(y))
+		peaks.fill(-1)
+		if len(y) < 5:
+			print("array length too short")
+			return 
+
+		for i in range(3, len(y)-3):
+			"""
+			Match all 3 conditions
+			cond_a checks for points 2 away from the centerpoint to make sure function is increasing -> decreasing.
+			cond_b checks 3 away from the centerpoint going left in time to make sure function is increasing.
+			cond_c checks 3 away from the centerpoint going right in time to make sure function is decreasing.
+			b and c involve one value from other side of timescale.
+			"""
+			cond_a, cond_b, cond_c = False, False, False
+			if (y[i] > y[i-2]) and (y[i] > y[i-1]) and (y[i] > y[i+1]) and (y[i] > y[i+2]) and (y[i] - (min(y[i-2], y[i-1], y[i+1], y[i+2]) > alpha)):
+				cond_a = True
+			if (y[i-2] > y[i-3]) and (y[i-1] > y[i-2]) and (y[i] > y[i-1]) and (y[i] > y[i+1]) and (y[i] - (min(y[i-3], y[i-2], y[i-1], y[i+1]) > alpha)):
+				cond_b = True
+			if (y[i] > y[i-1]) and (y[i] > y[i+1]) and (y[i+1] > y[i+2]) and (y[i+2] > y[i+3]) and (y[i] - (min(y[i-1], y[i+1], y[i+2], y[i+3]) > alpha)):
+				cond_c = True
+#			print(cond_a, cond_b, cond_c)
+			if cond_a and cond_b and cond_c:
+				peaks[i] = 1
+
+		return peaks
+
+
+	def plotFFT(self, y, offset=300, nsamples=600, fs=60):
+		end_sample = nsamples+offset
+
+		sp = fftpack.fft(y[offset:end_sample])
+#		x = np.array(self.IMU_data['WatchtImeIntervalSince1970'][offset:end_sample])
+		print("freqs: ", fftpack.fftfreq(len(y[offset:end_sample])))
+		freqs = fftpack.fftfreq(len(y[offset:end_sample])) * fs
+		plt.plot(freqs, sp)
+		plt.title("FFT")
+		plt.show()
 
 
 
@@ -125,20 +171,25 @@ if __name__ == '__main__':
 	path = 'data/Motion-sessions_2019-09-14_15-06-01.csv'
 	cols = ['WatchtImeIntervalSince1970', 'WatchGyroX',	'WatchGyroY', 'WatchGyroZ', 'WatchAccX', 'WatchAccY', 'WatchAccZ']
 	sc = stepcounter(src=path, cols=cols)
-	sc.printDf()
+#	sc.printDf()
+
+#	sc.plotFFT(sc.filtered_data['WatchGyroY'])
 
 
 	lag = 30
-	threshold = 0.6
+	threshold = 5
 	influence = 0
 	
 	threshold_outputs = sc.applyThresholding(
-		sc.filtered_data['WatchGyroY'], 
+		sc.filtered_data['WatchAccY'], 
 		lag=lag,
 		threshold=threshold,
 		influence=influence)
 	print(threshold_outputs['signals'][300:350])
 	print("num peaks: ", sc.count(threshold_outputs['signals']) )
+
+	simple_peaks = sc.applySimplePeakDetect(sc.filtered_data['WatchAccZ'])
+	print("num simple peaks: ", sc.count(simple_peaks))
 
 #	plt.plot(sc.timestamps[300:350], threshold_outputs['signals'][300:350])
 #	plt.show()
