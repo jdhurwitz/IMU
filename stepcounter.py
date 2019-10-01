@@ -124,14 +124,22 @@ class stepcounter:
 	def applySimplePeakDetect(self, y, alpha=1):
 		"""
 		Naive peak detection method which looks at a current datapoint as well as the nearby points
+		returns tuple with peak + its timestamp
 		"""
 		peaks = np.zeros(len(y))
 		peaks.fill(-1)
+		peaks = []
+
 		if len(y) < 5:
 			print("array length too short")
 			return 
 
+
+		walking_detected = sc.applyFreqWalkDetect(y)
 		for i in range(3, len(y)-3):
+			if not walking_detected[i]:
+				continue
+
 			"""
 			Match all 3 conditions
 			cond_a checks for points 2 away from the centerpoint to make sure function is increasing -> decreasing.
@@ -148,20 +156,58 @@ class stepcounter:
 				cond_c = True
 #			print(cond_a, cond_b, cond_c)
 			if cond_a and cond_b and cond_c:
-				peaks[i] = 1
+				peaks.append(self.IMU_data['WatchtImeIntervalSince1970'][i])
 
 		return peaks
 
 
-	def plotFFT(self, y, offset=300, nsamples=600, fs=60):
-		end_sample = nsamples+offset
 
-		sp = fftpack.fft(y[offset:end_sample])
-#		x = np.array(self.IMU_data['WatchtImeIntervalSince1970'][offset:end_sample])
-		print("freqs: ", fftpack.fftfreq(len(y[offset:end_sample])))
-		freqs = fftpack.fftfreq(len(y[offset:end_sample])) * fs
-		plt.plot(freqs, sp)
-		plt.title("FFT")
+
+	def applyFreqWalkDetect(self, y, beta=1.5, window=60, step=30, fs=60):
+		"""
+		y: accel data 
+		beta: freq threshold for min walking freq 
+		window: how many samples to include in a welch calculation 
+		step: how many samples to shift forward 
+		Generate an array which represents whether or not we think a value in y corresponds to the state where a user is walking.
+		"""
+		walking_detected = np.zeros(len(y), dtype=bool)
+
+		#TODO: find the closest number to window size that goes into len(y)
+		dc_offset = np.mean(np.abs(y))
+		y = np.abs(y)
+		for i in range(0, len(y)-window, step):
+			y_shifted = [y[j] - dc_offset for j in range(i, i+window)]
+			freqs, psd = signal.welch(y_shifted, fs)
+
+			max_idx = np.argmax(psd)
+			periodic_freq = freqs[max_idx]
+			if periodic_freq >= beta: #this looks like walking
+				walking_detected[i:i+window] = True
+			else:
+				walking_detected[i:i+window] = False
+
+		return walking_detected
+
+	def plotFFT(self, y, offset=0, nsamples=100, fs=60):
+		end_sample = nsamples+offset
+		dc_offset = np.mean(y[offset:end_sample])
+
+		y_shifted = [y[i] - dc_offset for i in range(offset, end_sample)]
+
+
+		freqs, psd = signal.welch(y_shifted, fs)
+
+		max_idx = np.argmax(psd)
+		periodic_freq = freqs[max_idx]
+		power_max = psd[max_idx]
+
+		print("Periodic w/ f=", periodic_freq)
+
+		plt.plot(freqs, psd)
+		plt.title('Power Spectral Density')
+		plt.xlabel("frequency")
+		plt.ylabel("power")
 		plt.show()
 
 
@@ -173,7 +219,7 @@ if __name__ == '__main__':
 	sc = stepcounter(src=path, cols=cols)
 #	sc.printDf()
 
-#	sc.plotFFT(sc.filtered_data['WatchGyroY'])
+
 
 
 	lag = 30
@@ -188,11 +234,17 @@ if __name__ == '__main__':
 	print(threshold_outputs['signals'][300:350])
 	print("num peaks: ", sc.count(threshold_outputs['signals']) )
 
-	simple_peaks = sc.applySimplePeakDetect(sc.filtered_data['WatchAccZ'])
+	simple_peaks = sc.applySimplePeakDetect(sc.filtered_data['WatchAccY'])
 	print("num simple peaks: ", sc.count(simple_peaks))
+	
+	
 
-#	plt.plot(sc.timestamps[300:350], threshold_outputs['signals'][300:350])
+#	fig, ax = plt.subplots(2)
+#	fig.subplots_adjust(hspace = 1)	
+#	ax[0].plot(sc.timestamps[0:400], sc.IMU_data['WatchAccY'][0:400])
 #	plt.show()
+
+#	sc.plotFFT(sc.filtered_data['WatchAccY'])
 #	sc.visualizeAccel()	
 #	print(sc.IMU_data)
 #	sc.plotFiltered()
