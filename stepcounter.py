@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 from scipy import signal, fftpack
+import math
 
 class stepcounter:
 	def __init__(self, src, cols):
@@ -23,9 +24,11 @@ class stepcounter:
 		self.timestamps = self.IMU_data['WatchtImeIntervalSince1970']
 
 		self.filtered_data = self.IMU_data.copy(deep=True)
+		self.MA_filtered_data = self.IMU_data.copy(deep=True) #to experiment with the MA filter
 		for col in cols[1:len(cols)]:
 #			print(self.filtered_data[col])
 			self.filtered_data[col] = self.applyFilter(10, self.filtered_data[col])
+			self.MA_filtered_data[col] = self.applyMovingAvgFilter(10, self.MA_filtered_data[col], n_components=3)
 
 
 
@@ -79,6 +82,33 @@ class stepcounter:
 
 		return filtered
 
+	def applyMovingAvgFilter(self, cutoff, waveform, n_components=None, fs=60):
+		#convert cutoff to a # samples with some sampling freq (60 for ex)
+		#https://dsp.stackexchange.com/questions/9966/what-is-the-cut-off-frequency-of-a-moving-average-filter
+
+		#attempt to figure out # components...this doesn't work well
+		if n_components == None:
+			F_norm = cutoff/fs 
+			n_components = sqrt(0.196202 + F_norm**2)/F_norm
+			n_components = math.ceil(n_components)
+			print("n_components")
+
+		smoothed_waveform = np.zeros(len(waveform))
+		moving_avg = 0
+		queue = []
+		for i in range(len(waveform)):
+			queue.append(waveform[i])
+			if(len(queue) == n_components):
+				moving_avg = np.mean(queue)
+				queue.pop(0)
+				smoothed_waveform[i] = moving_avg
+
+		return smoothed_waveform
+
+
+
+
+
 
 	def plotFiltered(self, cutoff=10, offset=300, nsamples=600):
 		end_sample = nsamples+offset
@@ -87,7 +117,8 @@ class stepcounter:
 		fig.subplots_adjust(hspace = 1)
 		for i in range(0,3):
 			y = self.applyFilter(cutoff, 
-				waveform=np.array(self.IMU_data[self.cols[i+4]][offset:end_sample]))
+#			y = self.applyMovingAvgFilter(cutoff,
+				waveform=np.array(self.IMU_data[self.cols[i+4]][offset:end_sample])) #, n_components = 6)
 			ax[i].set_title("Filtered "+self.cols[i+4])
 			ax[i].plot(x,y)
 		plt.show()
@@ -128,7 +159,7 @@ class stepcounter:
 		"""
 		peaks = np.zeros(len(y))
 		peaks.fill(-1)
-		peaks = []
+
 
 		if len(y) < 5:
 			print("array length too short")
@@ -156,7 +187,7 @@ class stepcounter:
 				cond_c = True
 #			print(cond_a, cond_b, cond_c)
 			if cond_a and cond_b and cond_c:
-				peaks.append(self.IMU_data['WatchtImeIntervalSince1970'][i])
+				peaks[i] = 1
 
 		return peaks
 
@@ -235,7 +266,9 @@ if __name__ == '__main__':
 	print("num peaks: ", sc.count(threshold_outputs['signals']) )
 
 	simple_peaks = sc.applySimplePeakDetect(sc.filtered_data['WatchAccY'])
+	MA_simple_peaks = sc.applySimplePeakDetect(sc.MA_filtered_data['WatchAccY'])
 	print("num simple peaks: ", sc.count(simple_peaks))
+	print("num MA simple peaks: ", sc.count(MA_simple_peaks))
 	
 	
 
@@ -247,4 +280,5 @@ if __name__ == '__main__':
 #	sc.plotFFT(sc.filtered_data['WatchAccY'])
 #	sc.visualizeAccel()	
 #	print(sc.IMU_data)
-#	sc.plotFiltered()
+	sc.plotFiltered()
+	sc.show()
